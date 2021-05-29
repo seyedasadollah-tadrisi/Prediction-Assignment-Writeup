@@ -1,0 +1,142 @@
+---
+title: "Practical Machine Learning Course Project"
+output: html_document
+author: "L.Y"
+date: "5/23/2021"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Background
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+### Data
+The training data for this project are available here:
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+The test data are available here:
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+The data for this project come from this source: http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har
+
+### Steps
+
+#### 1. Import Data
+
+```{r ImportData, results='hide', message=FALSE}
+library(caret)
+library(e1071)
+library(randomForest)
+set.seed(1)
+if(!file.exists("./pml-training.csv")){
+  download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", destfile="./pml-training.csv", method="curl")
+}
+
+if(!file.exists("./pml-testing.csv")){
+  download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", destfile="./pml-testing.csv", method="curl")
+}
+train_file <- read.csv("./pml-training.csv")
+test_file <- read.csv("./pml-testing.csv")
+```
+
+
+#### Pre-process
+1. Get rid of non-sense data entries.
+2. Get rid of non-sense variables.
+3. Partition test data into training set(80%) and testing set(20%) for model performance measurements
+
+```{r PreProcess, results='hide', message=FALSE }
+train_data <- train_file[,colSums(is.na(train_file))==0]
+test_data <- test_file[,colSums(is.na(test_file))==0]
+train_extracted <-train_data[,8:length(train_data)]
+test_extracted <-test_data[,8:length(test_data)]
+
+classe <- train_extracted$classe
+
+train <- train_extracted[, sapply(train_extracted, is.numeric)]
+test <- test_extracted[, sapply(test_extracted, is.numeric)]
+train$classe <- classe
+
+set.seed(123)
+inTrain <- createDataPartition(train$classe, p = 0.8, list = FALSE)
+training <- train[inTrain, ]
+testing <- train[-inTrain, ]
+```
+#### Modelling
+Start with three classic classification models:
+
+ 1. random forests (rf)
+ 1. generalized boosted regression (gbm)
+ 1. k-nearest neighbor (knn)
+ 
+Perform following steps for each model
+
+ 1. Train model with training set
+ 1. Test model with testing set
+ 1. Generate confusion matrix of the model
+ 1. Get model accuracy
+ 
+Stack the predictions together using random forests and get prediction accuracy of the combo model
+
+Set cross-validation to 5-fold
+```{r, results='hide', message=FALSE}
+cv <- trainControl(method="cv", 5)
+```
+
+Random forests (rf)
+```{r RF, results='hide', message=FALSE}
+model_rf <- train(classe ~ ., data=training, method="rf", trControl=cv, ntree=100)
+pred_rf <- predict(model_rf, testing)
+rf_confusion_matrix <- confusionMatrix(factor(testing$classe), factor(pred_rf))
+rf_accuracy <- rf_confusion_matrix$overall[1]
+```
+
+Generalized boosted regression (gbm)
+```{r GBM, results='hide', message=FALSE}
+model_gbm <- train(classe ~ ., data=training, method="gbm", trControl = cv)
+pred_gbm <- predict(model_gbm, testing)
+gbm_confusion_matrix <- confusionMatrix(factor(testing$classe), factor(pred_gbm))
+gbm_accuracy <- gbm_confusion_matrix$overall[1]
+```
+
+K-nearest neighbor (knn)
+```{r KNN, results='hide', message=FALSE}
+model_knn <- train(classe ~ ., data=training, method="knn", trControl = cv)
+pred_knn <- predict(model_knn, testing)
+knn_confusion_matrix <- confusionMatrix(factor(testing$classe), factor(pred_knn))
+knn_accuracy <- knn_confusion_matrix$overall[1]
+```
+
+Stacked predictions
+```{r Combo, results='hide', message=FALSE}
+comb_predDF <- data.frame(pred_rf, pred_gbm, pred_knn, classe = testing$classe)
+model_comb <- train(classe ~ ., method = "rf", data = comb_predDF)
+pred_comb <- predict(model_comb, comb_predDF)
+pred_comb_confusion_matrix <- confusionMatrix(factor(pred_comb) , factor(testing$classe))
+pred_comb_accuracy <- pred_comb_confusion_matrix$overall[1]
+```
+
+#### Best model
+Compare model performance by looking at accuracy
+```{r, message=FALSE}
+table_of_accuracy <- rbind(rf_accuracy, gbm_accuracy, knn_accuracy, pred_comb_accuracy)
+print(table_of_accuracy)
+```
+As the result shows:
+
+1. Random forests has the best accuracy among all the models
+1. Combination of predictions from all three models doesn't improve the accuracy much.
+
+```{r, message=FALSE}
+rf_out_of_sample_error <- 1 - rf_accuracy
+```
+Therefore, random forests is the best model and will be used for predictions in following steps
+with accuracy `r rf_accuracy`
+and expected out-of-sample error `r rf_out_of_sample_error`
+
+
+### Predict using the best model
+```{r, message=FALSE}
+results <- predict(model_rf, test[,-length(names(test))])
+print(results)
+```
